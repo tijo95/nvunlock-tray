@@ -1,0 +1,11 @@
+# produits au 1er lancement par tray.py
+*_16.png
+*_32.png
+# etat local + journaux
+etat.json
+tray-run.log
+__pycache__/
+*.pyc
+.venv/
+# config locale (contient des chemins prives)
+config.json
