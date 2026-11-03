@@ -195,11 +195,20 @@ and its 26 releases). The pinned list is `SHA256SUMS.txt`, identical in release
 
 **Reading the state is installable from GitHub alone:**
 
+Run from inside `nvunlock-tray/`. The `New-Item` line is **not optional**: a fresh clone
+has no sibling `nv-unlock/` folder, and `Invoke-WebRequest` alone fails with
+`DirectoryNotFoundException` (measured).
+
 ```powershell
+New-Item -ItemType Directory -Force -Path ..\nv-unlock\release | Out-Null
 Invoke-WebRequest https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.9/ssdiag-x86_64-windows-0.6.4.exe `
   -OutFile ..\nv-unlock\release\ssdiag-x86_64-windows.exe
 $env:NVUNLOCK_SSDIAG = (Resolve-Path ..\nv-unlock\release\ssdiag-x86_64-windows.exe).Path
 ```
+
+You do **not** need `config.json`: `conf()` returns `{}` when it is absent. The
+simplest form is to put `ssdiag-x86_64-windows.exe` in the tray folder itself --
+`find_ssdiag()` looks there before the sibling folder.
 
 (That asset's SHA-256 is the pinned one, so the probe runs exactly the tool this
 project pins. `ssdiag` installs its driver per probe: EventID 7045, elevation.)
