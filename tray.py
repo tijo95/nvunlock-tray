@@ -113,6 +113,13 @@ class Tray:
         self.update(etat.read_state("light"))
 
     def do_probe(self, icon=None, item=None):
+        # Le callback du menu est declenche PAR LA BOUCLE DE TRACKING MODALE de
+        # TrackPopupMenuEx (pystray 0.19.5, _win32.py:215). L'invite UAC est
+        # modale elle aussi: lancee d'ici elle s'empile sur ce tracking et
+        # bloque. Le traitement part donc hors du fil du menu.
+        threading.Thread(target=self._probe, daemon=True).start()
+
+    def _probe(self):
         if not self.elevated():
             self.run_elevated()
             return
@@ -151,7 +158,15 @@ class Tray:
 
     # ------------------------------------------------------------- helpers
     def popup(self, t):
-        ctypes.windll.user32.MessageBoxW(0, t, "nvunlock-tray", 0x40)
+        # JAMAIS MessageBoxW dans le fil de la boucle de messages de l'icone.
+        # pystray 0.19.5 declenche le callback du menu depuis la boucle de
+        # tracking MODALE de TrackPopupMenuEx: une boite modale lancee de la,
+        # sans proprietaire (hwnd=0), se retrouve dans une boucle modale
+        # imbriquee. OK / Fermer ne parviennent pas a la boucle modale de la
+        # boite -> elle reste ouverte, les clics n'y changent rien.
+        # On delegue a un fil separe: le tracking du menu est libere aussitot.
+        threading.Thread(target=lambda: ctypes.windll.user32.MessageBoxW(
+            0, t, "nvunlock-tray", 0x40), daemon=True).start()
 
     @staticmethod
     def elevated() -> bool:

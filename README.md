@@ -116,9 +116,22 @@ Trois causes d'échec **silencieux** — l'icône ne s'affiche jamais, sans mess
 3. **`import etat` selon le répertoire courant.** Lancé depuis un autre dossier (`start`,
    `ShellExecuteW`, tâche planifiée), l'import échoue et `pythonw` n'affiche **aucune**
    traceback. → `sys.path.insert(0, BASE)` en tout début de fichier.
+4. **Les popups `OK` / `Fermer` ne se ferment pas.** C'est le plus vicieux, parce que la
+   boîte reste là et qu'aucun clic ne la ferme. `pystray` 0.19.5 déclenche le callback du
+   menu **depuis la boucle de tracking *modale* de `TrackPopupMenuEx`** (`_win32.py:215`) :
+   `MessageBoxW(0, …)` s'exécute donc au milieu d'une boucle modale **imbriquée**, sans
+   propriétaire. La boîte a bien sa propre boucle modale pour distribuer `IDOK`/
+   `IDCANCEL`, mais c'est celle du menu qui pompe les messages, et elle est accaparée par
+   la boîte → ton clic n'est jamais distribué à la boucle de la boîte. `do_probe` avait le
+   même nid, aggravé : `ShellExecuteW("runas")` y ouvrait **l'invite UAC**, modale elle
+   aussi, empilée sur le tracking du menu. → `popup()` **et** `do_probe()` **délèguent à un
+   thread séparé** ; le tracking du menu est libéré aussitôt, la boîte a sa propre
+   boucle et `OK`/`Fermer` fonctionnent. Dans la même veine, `_win32.py:204` précise que
+   « *TrackPopupMenuEx does not behave unless our systray window is the foreground window* ».
 
-Le diagnostic de ces trois cas : lancer sous **`python.exe`** et lire `stderr`, pas sous
-`pythonw.exe`.
+Le diagnostic des cas 1 à 3 : lancer sous **`python.exe`** et lire `stderr`, pas sous
+`pythonw.exe` (silence total sous `pythonw`). Le cas 4 ne lève aucune erreur : il se voit
+à l'écran, et se corrige par le fil délégué.
 
 ## Limites assumées
 
