@@ -3,6 +3,7 @@
 *_32.png
 # etat local + journaux
 etat.json
+cle.json
 tray-run.log
 __pycache__/
 *.pyc

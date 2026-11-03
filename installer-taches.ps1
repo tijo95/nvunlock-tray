@@ -50,7 +50,6 @@ Write-Host 'Taches installees:' -ForegroundColor Green
 Get-ScheduledTask -TaskName 'NvUnlock-Tray','NvUnlock-Probe' |
     Select-Object TaskName, State, @{n='Niveau';e={ $_.Principal.RunLevel }} | Format-Table -AutoSize
 
-Write-Host "ssdiag detecte: $(python -c "import sys;sys.path.insert(0,'$here');import etat;print(etat.find_ssdiag())")"
 Write-Host 'Demarrage immediat de l''icone...' -ForegroundColor Cyan
 Start-ScheduledTask -TaskName 'NvUnlock-Tray'
 Write-Host 'OK. Icone dans la barre des taches (grise tant que la sonde n''a pas tourne).'
