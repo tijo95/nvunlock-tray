@@ -116,22 +116,42 @@ Trois causes d'échec **silencieux** — l'icône ne s'affiche jamais, sans mess
 3. **`import etat` selon le répertoire courant.** Lancé depuis un autre dossier (`start`,
    `ShellExecuteW`, tâche planifiée), l'import échoue et `pythonw` n'affiche **aucune**
    traceback. → `sys.path.insert(0, BASE)` en tout début de fichier.
-4. **Les popups `OK` / `Fermer` ne se ferment pas.** C'est le plus vicieux, parce que la
-   boîte reste là et qu'aucun clic ne la ferme. `pystray` 0.19.5 déclenche le callback du
-   menu **depuis la boucle de tracking *modale* de `TrackPopupMenuEx`** (`_win32.py:215`) :
-   `MessageBoxW(0, …)` s'exécute donc au milieu d'une boucle modale **imbriquée**, sans
-   propriétaire. La boîte a bien sa propre boucle modale pour distribuer `IDOK`/
-   `IDCANCEL`, mais c'est celle du menu qui pompe les messages, et elle est accaparée par
-   la boîte → ton clic n'est jamais distribué à la boucle de la boîte. `do_probe` avait le
-   même nid, aggravé : `ShellExecuteW("runas")` y ouvrait **l'invite UAC**, modale elle
-   aussi, empilée sur le tracking du menu. → `popup()` **et** `do_probe()` **délèguent à un
-   thread séparé** ; le tracking du menu est libéré aussitôt, la boîte a sa propre
-   boucle et `OK`/`Fermer` fonctionnent. Dans la même veine, `_win32.py:204` précise que
-   « *TrackPopupMenuEx does not behave unless our systray window is the foreground window* ».
+4. **Les popups `OK` / `Fermer` ne se ferment pas.** Symptôme constaté, **cause non isolée**
+   — et je laisse cette réserve écrite, parce que l'explication que j'avais publiée ici était
+   **fausse**. Ce que le code de pystray 0.19.5 dit, lignes à l'appui :
+
+   - le menu est suivi par `TrackPopupMenuEx(... TPM_RETURNCMD ...)` (`_win32.py:215-222`) :
+     l'appel **revient avec l'identifiant choisi**, et le callback est invoqué **à la ligne 224,
+     après ce retour** — le tracking *modal* est donc **terminé** quand le callback s'exécute,
+     pas pendant ;
+   - le chemin réel est le **clic droit** → `WM_NOTIFY` (`_win32.py:193-203`) ; `_win32.py`
+     **ne gère pas `WM_COMMAND`** ;
+   - ce qui est sûr côté remédiation : `MessageBoxW(0, …)` est **sans propriétaire** et **tient
+     le fil qui porte `icon.run()`**. Un `popup()` par clic s'**empile** donc (une boîte par
+     clic : « Sonde maintenant », annulation d'UAC, élévation refusée) et l'impression
+     « ça reste ouvert » vient de là : le `OK` du haut ferme une boîte, celle du dessous est
+     révélée. `do_probe()` ajoutait l'**invite UAC**, modale elle aussi.
+
+   → `popup()` **et** `do_probe()` **délèguent à un thread séparé** : le fil de l'icône est
+   libéré aussitôt, plus de blocage de `icon.run()`. **L'empilement n'est pas supprimé** par
+   là : si deux `OK` se suivent, la seconde boîte est toujours derrière.
+
+   `_win32.py:204` précise au passage que « *TrackPopupMenuEx does not behave unless our
+   systray window is the foreground window* ».
+
+   **Piège pour qui veut tester** : poster `WM_COMMAND` sur la fenêtre cachée de l'icône
+   (classe `nvunlock<id>SystemTrayIcon`) **ne déclenche aucun callback** — pystray ne le gère
+   pas. Un test par cette voie ne prouve **rien** : la boîte attendue n'existe jamais, et
+   `FindWindowW("#32770", …)` ne trouve rien à fermer. Le seul chemin qui exerce le callback
+   est le clic droit réel sur l'icône.
 
 Le diagnostic des cas 1 à 3 : lancer sous **`python.exe`** et lire `stderr`, pas sous
 `pythonw.exe` (silence total sous `pythonw`). Le cas 4 ne lève aucune erreur : il se voit
-à l'écran, et se corrige par le fil délégué.
+à l'écran. Le cas 3 est le plus fourbe : sous `pythonw.exe` **sans poignées standard** (le cas
+du double-clic, du dossier Démarrage et d'une tâche planifiée), le processus **rend 1 sans
+écrire une seule ligne de script** — pas de journal, pas de traceback. Un lancement avec
+`stdout`/`stderr` redirigés vers un fichier **vit** là où le même lancement sans poignées
+meurt. Avoir ce détail évite d'attribuer au script un échec du lanceur.
 
 ## Limites assumées
 
