@@ -179,6 +179,41 @@ It takes them where they are, relative to the repo: `../nv-unlock/release/`
 impossible** -- the menu says so, it does not guess. Reading the state, on the other
 hand, needs nothing but `ssdiag`.
 
+### What a user can actually fetch (measured on 2026-11-03)
+
+Verified against `https://github.com/physicsdolphin/nv-uefi-unlocker` (branch `main`
+and its 26 releases). The pinned list is `SHA256SUMS.txt`, identical in release
+`v2.1.9` and in my working tree:
+
+| File `drive.py` verifies | Publicly available? | Evidence |
+|---|---|---|
+| `ssdiag-x86_64-windows.exe` | **yes** -- release `v2.1.9` asset `ssdiag-x86_64-windows-0.6.4.exe` | SHA-256 `16727d20...` = pinned `16727d20...` |
+| `BOOTX64.EFI` | **yes** -- release `v2.1.9` asset | SHA-256 `fc1f70ac...` = pinned |
+| `make-usbroot.ps1` | **no** -- pinned hash matches no public artifact | pinned `e5c5bcfc...`; branch `main` ships `26bf2275...`; release `v0.2.0` asset `74ee4ec6...`; `v0.1.4` asset `d44e8390...` |
+| `assets-x86_64-windows.exe` | **no** -- same situation | pinned `40822cbc...`; `v0.2.0` asset `609280` bytes, `v0.1.4` `602112` bytes, neither matches |
+| `release/inputs/` (341 MB) | **no** -- 404 in the git tree *and* in every release asset | -- |
+
+**Reading the state is installable from GitHub alone:**
+
+```powershell
+Invoke-WebRequest https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.9/ssdiag-x86_64-windows-0.6.4.exe `
+  -OutFile ..\nv-unlock\release\ssdiag-x86_64-windows.exe
+$env:NVUNLOCK_SSDIAG = (Resolve-Path ..\nv-unlock\release\ssdiag-x86_64-windows.exe).Path
+```
+
+(That asset's SHA-256 is the pinned one, so the probe runs exactly the tool this
+project pins. `ssdiag` installs its driver per probe: EventID 7045, elevation.)
+
+**Preparing the drive is NOT installable from GitHub today.** `drive.py` refuses to
+run an unverified maker -- it will not execute a `make-usbroot.ps1` whose SHA-256 is
+not the pinned one, and that refusal is the point of the check. So drive preparation
+is available only to whoever already holds the upstream tree with the pinned hashes
+(the author's tree), not to someone cloning public artifacts. This is an upstream
+packaging gap, not a design choice of this repo: the pinned hashes for the maker and
+the assets exe are published in `SHA256SUMS.txt`, but the files carrying them are not
+published anywhere. If you hit this, say so upstream (release `v2.1.9` ships
+`SHA256SUMS.txt` listing hashes for files that release does not ship).
+
 ## The icon menu
 
 `Probe now (ssdiag, elevated)` · `Re-read the saved verdict` ·
@@ -272,6 +307,10 @@ where the same launch without handles dies.
 - **NVML** is broken on the development machine (the drive's driver replaces
   `nvml.dll`), so the "clean" path through `pynvml` is not usable there. The project
   reads the GPU **through the upstream tool**, not by guessing.
+- **Drive preparation needs upstream files that are not published** (measured 2026-11-03,
+  see *What a user can actually fetch*): the pinned SHA-256 of `make-usbroot.ps1` and
+  `assets-x86_64-windows.exe` matches no public artifact, and `release/inputs/` is 404
+  everywhere. The icon, the state reading and `state.py` work without them.
 - Files **ignored by the repo**: `state.json`, `drive.json` (retained drive choice),
   `tray-run.log`, `config.json` (private paths), the `_16.png`/`_32.png` variants
   (regenerated at first launch).
