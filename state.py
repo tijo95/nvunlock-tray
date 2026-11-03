@@ -1,39 +1,39 @@
 """
-etat.py -- lecture de l'etat lock/unlock des GPU NVIDIA (nv-uefi-unlocker).
+state.py -- reads the lock/unlock state of NVIDIA GPUs (nv-uefi-unlocker).
 
-L'unlock consiste a poser des selecteurs dans le GPU:
-    SS0 = 0x88888888, SS1 = 0x8, porte FEAT PLM ouverte.
-Ces valeurs sont VOLATILES: une coupure secteur, un arret complet ou
-certains cycles de veille les effacent sans aucune erreur cote Windows.
+Unlocking sets selectors INSIDE the GPU:
+    SS0 = 0x88888888, SS1 = 0x8, FEAT PLM gate open.
+Those values are VOLATILE: a power loss, a full shutdown, or some sleep
+cycles erase them WITHOUT any error on the Windows side.
+This layer only READS. It never writes to the GPU.
 
-Cette couche ne fait que LIRE. Elle n'ecrit jamais dans le GPU.
+  mode "light" : loads NO driver. Re-reads the last known verdict
+                 (state.json) and rejects a verdict older than the last
+                 boot -- a verdict from before a boot says NOTHING about
+                 the current state.
+  mode "full"  : runs ssdiag, which briefly installs its SSDIAG_PMXDRV
+                 driver, reads the registers, then removes it. Needs
+                 elevation. Writes EventID 7045 (driver install) to the
+                 System log on every probe.
 
-  mode "light" : ne charge AUCUN pilote. Relit le dernier verdict connu
-                 (etat.json) et refuse un verdict plus ancien que le
-                 dernier demarrage -- un verdict d'avant le boot ne dit
-                 rien de l'etat actuel.
-  mode "full"  : lance ssdiag, qui installe brievement son pilote puis le
-                 supprime. Necite l'elevation. EventID 7045 (installation
-                 de pilote) dans le journal Systeme a chaque sonde.
-
-Emplacement de ssdiag : variable d'environnement NVUNLOCK_SSDIAG, cle
-"ssdiag" de config.json, puis recherche automatique (PATH, cote du tray,
-dossier frere nv-unlock/release).
+ssdiag location: the NVUNLOCK_SSDIAG variable, the "ssdiag" key of
+config.json, then automatic search (next to the tray, the sibling
+nv-unlock/release folder, the parent folder, PATH). No path is hardcoded.
 """
 from __future__ import annotations
 import json, os, shutil, subprocess, sys, datetime, re, ctypes, pathlib
 
 BASE     = pathlib.Path(__file__).resolve().parent
-STATE    = BASE / "etat.json"
+STATE    = BASE / "state.json"
 CONFIG   = BASE / "config.json"
 RUN_LOG  = BASE / "tray-run.log"
 
-TTL_MINUTES = 20       # au-dela, le verdict enregistre est considere perime
-UNLOCK_SS0  = 0x88888888
-UNLOCK_SS1  = 0x8
+TTL_MINUTES  = 20        # past this, the saved verdict counts as stale
+UNLOCK_SS0   = 0x88888888
+UNLOCK_SS1   = 0x8
 SSDIAG_NAMES = ("ssdiag-x86_64-windows.exe", "ssdiag.exe", "ssdiag")
 
-# --------------------------------------------------------------- config
+# ---------------------------------------------------------------- config
 def conf() -> dict:
     try:
         return json.loads(CONFIG.read_text(encoding="utf-8"))
@@ -41,18 +41,14 @@ def conf() -> dict:
         return {}
 
 def find_ssdiag() -> pathlib.Path | None:
-    """Resout l'executable ssdiag sans aucun chemin cods en dur."""
+    """Resolve the ssdiag executable, with no path hardcoded."""
     env = os.environ.get("NVUNLOCK_SSDIAG")
     cands = [env] if env else []
     c = conf().get("ssdiag")
     if c: cands.append(c)
-    cands += [
-        str(BASE / n) for n in SSDIAG_NAMES
-    ] + [
-        str(BASE.parent / "nv-unlock" / "release" / n) for n in SSDIAG_NAMES
-    ] + [
-        str(BASE.parent / n) for n in SSDIAG_NAMES
-    ]
+    cands += [str(BASE / n) for n in SSDIAG_NAMES] + [
+        str(BASE.parent / "nv-unlock" / "release" / n) for n in SSDIAG_NAMES] + [
+        str(BASE.parent / n) for n in SSDIAG_NAMES]
     for n in SSDIAG_NAMES:
         w = shutil.which(n)
         if w: cands.append(w)
@@ -67,7 +63,7 @@ def find_ssdiag() -> pathlib.Path | None:
 
 # ------------------------------------------------------------------ boot
 def boot_time() -> datetime.datetime:
-    """Date du dernier demarrage (GetTickCount64 = millisecondes depuis boot)."""
+    """Last boot time (GetTickCount64 = milliseconds since boot)."""
     ms = ctypes.windll.kernel32.GetTickCount64()
     return datetime.datetime.now() - datetime.timedelta(milliseconds=ms)
 
@@ -77,7 +73,7 @@ def booted_after(ts_iso: str) -> bool:
     except Exception:
         return True
 
-# ------------------------------------------------------------- etat sauve
+# ------------------------------------------------------------- saved state
 def load_state() -> dict | None:
     try:
         return json.loads(STATE.read_text(encoding="utf-8"))
@@ -95,7 +91,7 @@ def invalidate(reason: str):
         STATE.unlink()
     except FileNotFoundError:
         pass
-    _log(f"etat efface: {reason}")
+    _log(f"state cleared: {reason}")
 
 def classify(cards: list[str]) -> str:
     if not cards:
@@ -114,15 +110,15 @@ def _log(msg: str):
     except Exception:
         pass
 
-# ------------------------------------------------- ssdiag (mode full)
-# ssdiag affiche:  VERDICT [ga10x]: UNLOCKED   /   NOT_UNLOCKED
+# ------------------------------------------------- ssdiag (full mode)
+# ssdiag prints:  VERDICT [ga10x]: UNLOCKED   /   NOT_UNLOCKED
 _VERD = re.compile(r"VERDICT\s+\[([^\]]+)\]:\s*(UNLOCKED|NOT_UNLOCKED)", re.I)
 
 def probe_ssdiag(timeout: int = 120) -> tuple[list[str], str]:
-    """Retourne (verdicts par carte, source). L'elevation est requise."""
+    """Returns (per-card verdicts, source). Elevation is required."""
     exe = find_ssdiag()
     if exe is None:
-        return ([], "ssdiag introuvable: NVUNLOCK_SSDIAG ou config.json \"ssdiag\"")
+        return ([], 'ssdiag not found: set NVUNLOCK_SSDIAG or config.json "ssdiag"')
     try:
         p = subprocess.run([str(exe)], capture_output=True, text=True,
                            timeout=timeout,
@@ -133,13 +129,13 @@ def probe_ssdiag(timeout: int = 120) -> tuple[list[str], str]:
     cards = [m.group(2).upper() for m in _VERD.finditer(out)]
     if not cards:
         if "OpenSCManager" in out:
-            return ([], "ssdiag: elevation requise (lancer en administrateur)")
-        return ([], "ssdiag: aucun verdict dans la sortie")
+            return ([], "ssdiag: elevation required (run as administrator)")
+        return ([], "ssdiag: no verdict in the output")
     return (cards, "ssdiag")
 
-# ----------------------------------------- loader.log (indice, pas preuve)
+# ----------------------------------------- loader.log (a hint, not proof)
 def _removable_roots() -> list[str]:
-    """Lecteurs amovibles montes; sert a trouver loader.log sans coder G:."""
+    """Mounted removable drives; used to find loader.log without hardcoding G:."""
     roots = []
     for i in range(1, 27):
         d = f"{chr(64+i)}:\\"
@@ -152,10 +148,10 @@ def _removable_roots() -> list[str]:
     return roots
 
 def probe_loader_log(root: str | None = None) -> dict | None:
-    """Resume le dernier run de la cle UEFI (loader.log), si accessible.
+    """Summarise the last run of the UEFI drive (loader.log), if reachable.
 
-    C'est un INDICE sur le boot precedent, pas un etat GPU actuel: un log
-    vert ne prouve pas que l'etat survit dans la session en cours.
+    This is a HINT about the previous boot, not the current GPU state: a
+    green log does not prove the state survives in this session.
     """
     roots = [root] if root else conf().get("loader_roots") or _removable_roots()
     for r in roots:
@@ -169,18 +165,18 @@ def probe_loader_log(root: str | None = None) -> dict | None:
         ok = re.findall(r"ss0_unlock=(true|false)", txt, re.I)
         n  = re.search(r"multi-GPU pass complete \((\d+) target", txt)
         return {"path": str(p),
-                "taille": p.stat().st_size,
-                "modifie": datetime.datetime.fromtimestamp(p.stat().st_mtime)
+                "size": p.stat().st_size,
+                "modified": datetime.datetime.fromtimestamp(p.stat().st_mtime)
                             .isoformat(timespec="seconds"),
                 "unlock_true":  sum(1 for x in ok if x.lower() == "true"),
                 "unlock_false": sum(1 for x in ok if x.lower() == "false"),
-                "cibles": int(n.group(1)) if n else 0,
+                "targets": int(n.group(1)) if n else 0,
                 "stop": bool(re.search(r"\bSTOP\b", txt, re.I))}
     return None
 
-# ------------------------------------------------------------------ etat
+# ------------------------------------------------------------------ state
 def read_state(mode: str = "light") -> dict:
-    """Etat affiche par l'icone: unlocked | partial | locked | unknown."""
+    """State shown by the icon: unlocked | partial | locked | unknown."""
     st = load_state()
     if mode == "full":
         cards, src = probe_ssdiag()
@@ -188,29 +184,29 @@ def read_state(mode: str = "light") -> dict:
             return {"state": "unknown", "detail": src, "cards": [], "source": src}
         save_state(cards, src)
         return {"state": classify(cards),
-                "detail": f"{len(cards)} carte(s) sondee(s)",
+                "detail": f"{len(cards)} card(s) probed",
                 "cards": cards, "source": src}
 
     if not st:
         return {"state": "unknown",
-                "detail": "aucune sonde enregistree - 'Sonde maintenant'",
-                "cards": [], "source": "aucun etat"}
+                "detail": "no probe recorded - 'Probe now'",
+                "cards": [], "source": "no state"}
     if booted_after(st["ts"]):
-        invalidate("redemarrage depuis le dernier verdict")
+        invalidate("reboot since the last verdict")
         return {"state": "unknown",
-                "detail": "la machine a redemarre apres la derniere sonde",
-                "cards": [], "source": "perime (boot)"}
+                "detail": "the machine rebooted after the last probe",
+                "cards": [], "source": "stale (boot)"}
     age = (datetime.datetime.now() -
            datetime.datetime.fromisoformat(st["ts"])).total_seconds() / 60
     if age > TTL_MINUTES:
-        return {"state": "unknown", "detail": f"verdict perime ({age:.0f} min)",
-                "cards": st["cards"], "source": st["source"] + " (perime)"}
-    return {"state": classify(st["cards"]), "detail": f"verdict de {age:.0f} min",
+        return {"state": "unknown", "detail": f"verdict stale ({age:.0f} min)",
+                "cards": st["cards"], "source": st["source"] + " (stale)"}
+    return {"state": classify(st["cards"]), "detail": f"verdict {age:.0f} min old",
             "cards": st["cards"], "source": st["source"]}
 
 if __name__ == "__main__":
     mode = "full" if "--full" in sys.argv else "light"
     exe = find_ssdiag()
     print(f"boot: {boot_time():%Y-%m-%d %H:%M}  mode: {mode}")
-    print(f"ssdiag: {exe if exe else 'introuvable'}")
+    print(f"ssdiag: {exe if exe else 'not found'}")
     print(json.dumps(read_state(mode), ensure_ascii=False, indent=1))

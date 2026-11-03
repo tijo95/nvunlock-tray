@@ -1,5 +1,5 @@
 {
-  "_comment": "copier en config.json -- tout est optionnel, aucun chemin requis",
-  "ssdiag": "C:\\chemin\\vers\\ssdiag-x86_64-windows.exe",
+  "_comment": "copy to config.json -- everything is optional, no path required",
+  "ssdiag": "C:\\path\\to\\ssdiag-x86_64-windows.exe",
   "loader_roots": ["G:"]
 }
