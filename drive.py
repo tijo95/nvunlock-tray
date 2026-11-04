@@ -217,6 +217,115 @@ def run_ps(cmd: str, timeout: int = 240) -> str:
     return (r.stdout or "") + (r.stderr or "")
 
 # ------------------------------------------------- pinned tools integrity gate
+# The upstream tools are NOT in this repo (their inputs/ weighs 325 MB). They are
+# published inside the nv-uefi-unlocker release v2.1.9 ZIP asset -- measured
+# 2026-11-04, and the 404 you get probing ".../download/v2.1.9/make-usbroot.ps1"
+# does NOT mean they are unpublished: that is a top-level asset URL, the files live
+# in the zip. install_tools() fetches that zip, checks the zip's own SHA-256 (the
+# value GitHub itself publishes as the asset digest), then extracts ONLY the files
+# whose SHA-256 matches the pinned list, and writes nothing on a mismatch.
+TOOLS_URL = ("https://github.com/physicsdolphin/nv-uefi-unlocker/releases/"
+             "download/v2.1.9/nv-uefi-unlocker-v2.1.9.zip")
+TOOLS_ZIP_SHA = "73261a446842a8b0028552c4b0c3eb5b0b6a18b8fdabf1833595f14eae283830"
+TOOLS_SUMS_URL = ("https://github.com/physicsdolphin/nv-uefi-unlocker/releases/"
+                  "download/v2.1.9/SHA256SUMS.txt")
+TOOLS_SUMS_SHA = "e0118ec90176b7d7eb59f9d503728762ec6cf1dc38b36c0dfd27e37d280a958d"
+# Files extracted from the zip into release/. The rest of the zip (LICENSE, README.md,
+# make-usbroot.sh, assets-x86_64-linux, enable-turing-unlock.ps1) is NOT needed by
+# drive.py, so it is not written.
+TOOLS_FILES = ("make-usbroot.ps1", "assets-x86_64-windows.exe", "BOOTX64.EFI")
+
+def install_tools(timeout: int = 240) -> tuple[bool, str]:
+    """Fetch the pinned upstream tools so the drive can be built. Needs no elevation.
+
+    Order of checks, all BEFORE any file is written:
+      1. download SHA256SUMS.txt, check its SHA-256 against TOOLS_SUMS_SHA;
+      2. download the release zip, check its SHA-256 against TOOLS_ZIP_SHA;
+      3. per file, check the SHA-256 against the list from step 1.
+    A file that fails step 3 is not written. An existing file whose hash already
+    matches is left untouched. Nothing is ever run from here: this only places bytes.
+    """
+    import hashlib, io, zipfile, urllib.request
+
+    def get(url: str) -> bytes:
+        req = urllib.request.Request(url, headers={"User-Agent": "nvunlock-tray"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+
+    def sha(b: bytes) -> str:
+        return hashlib.sha256(b).hexdigest()
+
+    if not SUMS.exists():
+        try:
+            sums = get(TOOLS_SUMS_URL)
+        except Exception as e:
+            return (False, f"cannot download SHA256SUMS.txt: {e!r}")
+        if sha(sums) != TOOLS_SUMS_SHA:
+            return (False, f"SHA256SUMS.txt SHA-256 mismatch, NOT kept: got {sha(sums)[:16]}..., "
+                            f"pinned {TOOLS_SUMS_SHA[:16]}...")
+        try:
+            SUMS.parent.mkdir(parents=True, exist_ok=True)
+            SUMS.write_bytes(sums)
+        except OSError as e:
+            return (False, f"cannot write {SUMS}: {e!r}")
+
+    want = {}
+    for line in SUMS.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.match(r"^([0-9a-f]{64}) \*(\S+)$", line.strip())
+        if m: want[m.group(2)] = m.group(1)
+
+    skipped: dict[str, str] = {}
+    for name in TOOLS_FILES:
+        p = RELEASE / name
+        if p.exists() and sha(p.read_bytes()) == want.get(name, ""):
+            skipped[name] = f"{name} (already present, SHA-256 verified)"
+    if len(skipped) == len(TOOLS_FILES):
+        return (True, "tools already in place:\n" + "\n".join("  - " + s for s in skipped.values()))
+
+    try:
+        raw = get(TOOLS_URL)
+    except Exception as e:
+        return (False, f"cannot download the release zip: {e!r}")
+    if sha(raw) != TOOLS_ZIP_SHA:
+        return (False, f"release zip SHA-256 mismatch, NOTHING extracted: got {sha(raw)[:16]}..., "
+                        f"pinned {TOOLS_ZIP_SHA[:16]}...")
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile as e:
+        return (False, f"the downloaded zip is not readable: {e!r}")
+
+    out: list[str] = []
+    try:
+        RELEASE.mkdir(parents=True, exist_ok=True)
+        (RELEASE / "inputs").mkdir(parents=True, exist_ok=True)
+        for name in TOOLS_FILES:
+            if name in skipped:      # already verified on disk: not rewritten, not re-reported
+                continue
+            p = RELEASE / name
+            data = z.read(name)
+            h = want.get(name)
+            if h is None:
+                out.append(f"{name}: not in the pinned list, NOT written")
+                continue
+            if sha(data) != h:
+                out.append(f"{name}: SHA-256 mismatch (got {sha(data)[:12]}..., pinned "
+                           f"{h[:12]}...), NOT written")
+                continue
+            p.write_bytes(data)
+            out.append(f"{name}: {len(data)} bytes, SHA-256 verified {h[:12]}...")
+        for s in skipped.values(): out.append(s)
+    except KeyError as e:
+        return (False, f"{e!r} is not in the release zip")
+    except OSError as e:
+        return (False, f"cannot write into {RELEASE}: {e!r}")
+    finally:
+        z.close()
+
+    if any("NOT written" in s for s in out):
+        return (False, "partial install:\n" + "\n".join("  - " + s for s in out))
+    return (True, f"tools installed in {RELEASE} (zip sha256 {TOOLS_ZIP_SHA[:12]}...):\n"
+                   + "\n".join("  - " + s for s in out))
+
 def check_tools() -> list[str]:
     """SHA-256 check of the upstream tools BEFORE running them. Returns the
     list of problems; empty = tools trustworthy."""

@@ -472,6 +472,22 @@ where the same launch without handles dies.
 
 ## Version
 
+**v2.2.2** -- menu **1** now installs the **drive tools too**, not only `ssdiag`. A user
+who downloaded the `v2.2.1` zip and clicked **Prepare the drive** got exactly:
+`TOOLS NOT VERIFIED: tool missing: make-usbroot.ps1; tool missing:
+assets-x86_64-windows.exe; tool missing: BOOTX64.EFI; SHA256SUMS.txt missing`.
+Correct behaviour (the gate refuses unverified tools) and a **design gap**: entry 1 knew
+how to download one pinned file from the pinned release, and nothing knew how to fetch
+the other three. `drive.install_tools()` is the same pattern: download `SHA256SUMS.txt`,
+check its SHA-256; download the release zip, check its SHA-256 (`73261a446842…`, the
+value GitHub publishes as the asset digest); extract **only** files whose SHA-256
+matches the pinned list. Measured on a `v2.2.1`-identical tree (17 files, no sibling
+`nv-unlock/`): before -> the four lines above; after -> `make-usbroot.ps1: 25289 bytes,
+SHA-256 verified e5c5bcfc…`, `assets-x86_64-windows.exe: 608256 bytes … 40822cbc…`,
+`BOOTX64.EFI: 339456 bytes … fc1f70ac…`, `check_tools() -> []`, and `--check` says
+`upstream tools: SHA-256 verified`. Second click is a no-op ("already present, SHA-256
+verified"). No elevation.
+
 **v2.2.1** -- retraction, measured the same day: the 2026-11-03 claim "drive
 preparation is not installable from GitHub" was **wrong**. The four files `drive.py`
 verifies are published inside `nv-uefi-unlocker-v2.1.9.zip` at their pinned SHA-256

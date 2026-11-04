@@ -91,7 +91,7 @@ class Tray:
             Item(state_line, None, enabled=False),
             Item(order_line, None, enabled=False),
             pystray.Menu.SEPARATOR,
-            Item("1. Install ssdiag (verified download)", self.do_install_ssdiag),
+            Item("1. Install ssdiag + drive tools (verified download)", self.do_install_ssdiag),
             Item("2. Drive diagnostic (GPU, volumes, tools)", self.do_diagnostic),
             Item("3. Prepare the drive (build + copy)", self.do_prepare),
             Item("4. Probe now (ssdiag, elevated)", self.do_probe),
@@ -149,13 +149,26 @@ class Tray:
             ok, msg = state.install_ssdiag()
         except Exception as e:      # never die on a network failure
             ok, msg = False, f"install failed: {e!r}"
-        self._set_tip("ssdiag installed, SHA-256 verified" if ok else "ssdiag install failed")
-        self.popup(("ssdiag installed in the tray folder, SHA-256 verified against the "
-                    "pinned upstream release.\n\nRight-click -> 'Probe now' (UAC asks once)."
-                    if ok else
-                    "ssdiag was NOT installed.\n\n" + msg +
-                    "\n\nNothing was run. You can install it by hand: see the README, "
-                    "section 'What a user can actually fetch'."))
+        # Same pinned release, same pattern: the drive cannot be built without the
+        # upstream tools (make-usbroot.ps1, assets-x86_64-windows.exe, BOOTX64.EFI),
+        # and they are published in the release ZIP, not as top-level assets. Fetching
+        # them here is what turns "TOOLS NOT VERIFIED: tool missing" into a build.
+        self._set_tip("Downloading the pinned drive tools (release zip)...")
+        try:
+            tok, tmsg = drive.install_tools()
+        except Exception as e:
+            tok, tmsg = False, f"tools install failed: {e!r}"
+        both = ok and tok
+        self._set_tip("ssdiag + drive tools installed, SHA-256 verified" if both
+                      else "install incomplete, see the message")
+        self.popup(("Installed, each file SHA-256 verified against the pinned upstream release:\n\n"
+                    + msg + "\n\n" + tmsg +
+                    "\n\nRight-click -> 'Probe now' (UAC asks once), then 'Prepare the drive'."
+                    if both else
+                    "NOT everything was installed. Nothing was run.\n\n"
+                    + ("ssdiag: " + msg if not ok else "ssdiag: ok") + "\n\n"
+                    + ("drive tools: " + tmsg if not tok else "drive tools: ok") +
+                    "\n\nYou can do it by hand: README, section 'What a user can actually fetch'."))
         if ok:
             self.do_refresh()
 
