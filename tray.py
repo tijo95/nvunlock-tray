@@ -80,12 +80,22 @@ class Tray:
         # raises AttributeError in the setup thread -> the icon dies before
         # ever appearing. So the callbacks close over self (the Tray).
         state_line = lambda _item=None: f"State: {TITLE[self.state]}"
+        # THE NUMBERS ARE THE INSTALL ORDER. The menu is read top to bottom in the
+        # order that actually works: any other order only produces boxes saying
+        # "not ready yet" (no ssdiag = probe stays grey; tools not SHA-256 verified
+        # = the drive build is refused). One line only: a Windows menu item is drawn
+        # on a single line, a multi-line text renders as a box glyph, not a break.
+        order_line = lambda _item=None: ("Order: 1 Install ssdiag  2 Diagnostic  "
+                                         "3 Prepare drive  4 Probe  5 Re-read")
         return pystray.Menu(
             Item(state_line, None, enabled=False),
-            Item("Probe now (ssdiag, elevated)", self.do_probe),
-            Item("Re-read the saved verdict", self.do_refresh),
-            Item("Prepare the drive (build + copy)", self.do_prepare),
-            Item("Drive diagnostic (GPU, volumes, tools)", self.do_diagnostic),
+            Item(order_line, None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            Item("1. Install ssdiag (verified download)", self.do_install_ssdiag),
+            Item("2. Drive diagnostic (GPU, volumes, tools)", self.do_diagnostic),
+            Item("3. Prepare the drive (build + copy)", self.do_prepare),
+            Item("4. Probe now (ssdiag, elevated)", self.do_probe),
+            Item("5. Re-read the saved verdict", self.do_refresh),
             pystray.Menu.SEPARATOR,
             Item("Replay the drive (run the procedure again)", self.replay_hint),
             Item("Open loader.log", self.open_log),
@@ -127,6 +137,27 @@ class Tray:
             self.run_elevated()
             return
         self.update(state.read_state("full"))
+
+    def do_install_ssdiag(self, icon=None, item=None):
+        # Same reason as do_probe: never do network work inside the menu callback
+        # (modal tracking loop). Goes to a thread.
+        threading.Thread(target=self._install_ssdiag, daemon=True).start()
+
+    def _install_ssdiag(self):
+        self._set_tip("Downloading ssdiag from the pinned upstream release...")
+        try:
+            ok, msg = state.install_ssdiag()
+        except Exception as e:      # never die on a network failure
+            ok, msg = False, f"install failed: {e!r}"
+        self._set_tip("ssdiag installed, SHA-256 verified" if ok else "ssdiag install failed")
+        self.popup(("ssdiag installed in the tray folder, SHA-256 verified against the "
+                    "pinned upstream release.\n\nRight-click -> 'Probe now' (UAC asks once)."
+                    if ok else
+                    "ssdiag was NOT installed.\n\n" + msg +
+                    "\n\nNothing was run. You can install it by hand: see the README, "
+                    "section 'What a user can actually fetch'."))
+        if ok:
+            self.do_refresh()
 
     def do_prepare(self, icon=None, item=None):
         # Build + copy: ~1 min 45 s measured (12 s of maker, offline). The

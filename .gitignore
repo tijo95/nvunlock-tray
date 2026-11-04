@@ -10,3 +10,8 @@ __pycache__/
 .venv/
 # local config (contains private paths)
 config.json
+# the probe binary is NOT committed: menu entry 1 downloads it from the pinned
+# release asset and checks its SHA-256 before writing anything
+ssdiag*.exe
+# drive build scratch (349 MB) -- never a source file
+scratch-drive/

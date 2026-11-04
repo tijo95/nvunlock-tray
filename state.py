@@ -33,6 +33,14 @@ UNLOCK_SS0   = 0x88888888
 UNLOCK_SS1   = 0x8
 SSDIAG_NAMES = ("ssdiag-x86_64-windows.exe", "ssdiag.exe", "ssdiag")
 
+# Pinned upstream release: the ONLY source this module will download from, and the
+# SHA-256 it must match. From nv-uefi-unlocker release v2.1.9 / SHA256SUMS.txt, line
+# "16727d20...  *ssdiag-x86_64-windows.exe" (verified against the local tree).
+SSDIAG_URL  = ("https://github.com/physicsdolphin/nv-uefi-unlocker/releases/"
+               "download/v2.1.9/ssdiag-x86_64-windows-0.6.4.exe")
+SSDIAG_SHA  = "16727d200119a25a0d5acae057daab36924999f5842df9835ba708e48b91bc6f"
+SSDIAG_TARGET = "ssdiag-x86_64-windows.exe"
+
 # ---------------------------------------------------------------- config
 def conf() -> dict:
     try:
@@ -60,6 +68,38 @@ def find_ssdiag() -> pathlib.Path | None:
         except OSError:
             continue
     return None
+
+
+def install_ssdiag(dest: str | None = None, timeout: int = 240) -> tuple[bool, str]:
+    """Fetch ssdiag from the pinned upstream release and check its SHA-256.
+
+    Downloads from SSDIAG_URL ONLY (https, pinned release). The bytes are checked
+    BEFORE any file is written: on a SHA-256 mismatch nothing is written and nothing
+    is run. Writes into the tray folder, where find_ssdiag() looks first. Needs no
+    elevation (plain HTTPS download to the app folder, no driver, no registry).
+    """
+    import hashlib
+    import urllib.request
+
+    target = pathlib.Path(dest) if dest else BASE / SSDIAG_TARGET
+    try:
+        req = urllib.request.Request(SSDIAG_URL, headers={"User-Agent": "nvunlock-tray"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read()
+    except Exception as e:
+        return (False, f"download failed: {e!r}")
+
+    got = hashlib.sha256(data).hexdigest()
+    if got != SSDIAG_SHA:
+        return (False, f"SHA-256 mismatch, file NOT kept: got {got[:16]}..., "
+                        f"pinned {SSDIAG_SHA[:16]}...")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    except OSError as e:
+        return (False, f"cannot write {target}: {e!r}")
+    return (True, f"installed {target.name} ({len(data)} bytes, SHA-256 verified "
+                   f"{got[:16]}...) -> {target}")
 
 # ------------------------------------------------------------------ boot
 def boot_time() -> datetime.datetime:

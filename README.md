@@ -1,9 +1,12 @@
 # nvunlock-tray
 
 A Windows taskbar (system tray) icon for NVIDIA GPUs unlocked by
-[nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker). It does two
-things: **it shows the lock/unlock state** (writing nothing to the GPU), and **it
-prepares the USB drive** that sets that state (build + copy + SHA-256 verification).
+[nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker). It does three
+things: **it shows the lock/unlock state** (writing nothing to the GPU), **it prepares
+the USB drive** that sets that state (build + copy + SHA-256 verification), and **it
+installs itself** (`install.cmd`: interpreter resolved from `PATH`, dependencies, the
+probe binary fetched under its pinned SHA-256, then the icon started and its start
+record checked).
 It unlocks nothing from Windows: that is physically impossible, see *How it works*.
 
 ![states](preview.png)
@@ -135,12 +138,43 @@ the drive* menu item.
 
 ## Installation
 
+**Double-click `install.cmd`.** It resolves the interpreter itself, installs the
+dependencies, and starts the icon. Numbers 1..5 in the menu are the order to click:
+
+| | Click | Why that order |
+|---|---|---|
+| **1** | Install ssdiag (verified download) | without `ssdiag` the probe stays grey and reads nothing |
+| **2** | Drive diagnostic (GPU, volumes, tools) | tells you if the upstream tools are `SHA-256 verified` |
+| **3** | Prepare the drive (build + copy) | **refused** while step 2 reports `tool missing` -- that gate is the integrity check, not a bug |
+| **4** | Probe now (ssdiag, elevated) | one UAC prompt, then green |
+| **5** | Re-read the saved verdict | reads `state.json`, runs nothing |
+
+Clicking out of order breaks nothing: each step answers with the reason the previous
+one is missing.
+
+`install.cmd` does four things that a bare `pip install` does not, all of them
+measured on a machine with the `WindowsApps` stub in `PATH`:
+
+1. the interpreter is taken from `PATH` as a **full path**, and any candidate living
+   inside `WindowsApps` is **skipped** -- a stub resolves, prints nothing, and pip
+   then installs into a different interpreter than the one that runs the icon;
+2. `pip install pystray pillow` runs **in that interpreter**, and is then verified
+   **in the same one** (`python -c "import pystray, PIL"`);
+3. the icon is started with **CreateProcess** (detached), not with `start`:
+   `start` goes through ShellExecute, and ShellExecute is the path App Paths
+   corrupts. CreateProcess with the full interpreter path is the path measured
+   working (log written + icon registered in the tray);
+4. it then checks that the icon **wrote a start record** in `tray-run.log`, and says
+   so. A silent failure is what a tray app under `pythonw` does: no traceback at all.
+
+Manual route, if you prefer:
+
 ```powershell
 py -m pip install pystray pillow        # or: pip install -r requirements.txt
-& .\launch-tray.cmd                     # the icon appears, in grey
+pythonw tray.py                         # the icon appears, in grey
 ```
 
-Right-click the icon -> **"Probe now (ssdiag, elevated)"** -> **Yes** to the UAC
+Right-click the icon -> **"4. Probe now (ssdiag, elevated)"** -> **Yes** to the UAC
 prompt -> the icon turns **green** (yellow if only one card is unlocked).
 
 ### Logon tasks (optional, elevated)
@@ -157,6 +191,11 @@ Without these tasks the icon works but starts **grey again after every reboot**:
 freshness guard voids the verdict at boot, and nothing re-probed it.
 
 ### `ssdiag`: no hardcoded path
+
+Menu entry **1** installs it: download from the pinned release asset only, SHA-256
+checked **before** anything is written, then placed next to the tray. The binary is
+**not** committed to this repo (see `.gitignore`) -- it arrives through that entry,
+under its hash.
 
 Resolution in this order: the `NVUNLOCK_SSDIAG` variable -> the `"ssdiag"` key of
 `config.json` -> next to the tray -> the sibling folder `nv-unlock/release/` -> the
@@ -225,13 +264,34 @@ published anywhere. If you hit this, say so upstream (release `v2.1.9` ships
 
 ## The icon menu
 
-`Probe now (ssdiag, elevated)` · `Re-read the saved verdict` ·
-`Prepare the drive (build + copy)` · `Drive diagnostic (GPU, volumes, tools)` ·
-`Replay the drive (run the procedure again)` · `Open loader.log` ·
-`Open the tray log` · interval **30 s / 60 s / 5 min** ·
-`Pause` / `Resume` · `Quit`
+Numbers 1..5 **are the installation order**, in the top-to-bottom reading order:
 
-Interval and pause are adjustable live, without restarting.
+```
+State: GPU: locked (stock values)          <- not clickable
+Order: 1 Install ssdiag  2 Diagnostic  3 Prepare drive  4 Probe  5 Re-read
+------------------------------------------------------------
+1. Install ssdiag (verified download)
+2. Drive diagnostic (GPU, volumes, tools)
+3. Prepare the drive (build + copy)
+4. Probe now (ssdiag, elevated)
+5. Re-read the saved verdict
+------------------------------------------------------------
+Replay the drive (run the procedure again)
+Open loader.log
+Open the tray log
+------------------------------------------------------------
+Interval 30 s
+Interval 60 s
+Interval 5 min
+Pause
+Resume
+------------------------------------------------------------
+Quit
+```
+
+The two header lines are non-clickable (display only). One line only per item: a
+Windows menu item is drawn on a single line, a `\n` in an item text renders as a box
+glyph, not a line break. Interval and pause are adjustable live, without restarting.
 
 ## Command lines
 
@@ -322,7 +382,9 @@ where the same launch without handles dies.
   everywhere. The icon, the state reading and `state.py` work without them.
 - Files **ignored by the repo**: `state.json`, `drive.json` (retained drive choice),
   `tray-run.log`, `config.json` (private paths), the `_16.png`/`_32.png` variants
-  (regenerated at first launch).
+  (regenerated at first launch), and `ssdiag*.exe` -- the probe binary is **not**
+  committed here: menu entry 1 downloads it from the pinned release asset and verifies
+  its SHA-256 before writing anything.
 
 ## Files
 
@@ -334,12 +396,23 @@ where the same launch without handles dies.
 | `unlocked.png` `locked.png` `partial.png` `unknown.png` | The 4 icons (64 px) |
 | `preview.png` | The four side by side |
 | `launch-tray.cmd` | Runs under `pythonw`, no console window |
+| `install.cmd` | One double-click: interpreter resolved from `PATH` as a **full path** (`WindowsApps` stubs skipped), deps installed and verified **in that same** interpreter, icon started by CreateProcess, then checks the start record in `tray-run.log` |
 | `probe-elevated.cmd` | Relaunches elevated and probes |
 | `installer-tasks.ps1` | The two logon tasks, interpreter resolved from `PATH` |
 | `config.json.example` | `ssdiag` + `loader_roots` (all optional) |
 | `requirements.txt` | `pystray`, `pillow` |
 
 ## Version
+
+**v2.2** -- measured end to end on a real machine (2026-11-04): `install.cmd`
+double-clicked -> icon in the tray (measured: a `SystemTrayIcon` window registered,
+start record in `tray-run.log`) -> ssdiag installed through menu **1** (SHA-256
+verified before writing) -> drive built and copied (349 MB, progress counted in
+bytes) -> booted from that drive -> `"cards": ["UNLOCKED", "UNLOCKED"]` read from
+ssdiag. The probe read `locked` **before** the reboot and `unlocked` **after** it, so
+the verdict is not a stale leftover; the freshness guard fired as designed
+(`state cleared: reboot since the last verdict`). Menu items are numbered **1..5 =
+the working install order**.
 
 **v2.1** -- the English layer is wired into the icon: `etat.py` -> `state.py`,
 `cle.py` -> `drive.py`, `tray.py` recabled onto them and translated. All strings,
