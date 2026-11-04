@@ -215,22 +215,68 @@ reads a `state.json` written by another tool: the verdict format is documented i
 It takes them where they are, relative to the repo: `../nv-unlock/release/`
 (`make-usbroot.ps1`, `BOOTX64.EFI`, `assets-x86_64-windows.exe`, `inputs/`) and
 `../nv-unlock/SHA256SUMS.txt`. **Without these files, drive preparation is
-impossible** -- the menu says so, it does not guess. Reading the state, on the other
-hand, needs nothing but `ssdiag`.
+impossible** -- the menu says so, it does not guess. They are all published, in the
+release `v2.1.9` zip: see the fetch recipe in the next section. Reading the state, on
+the other hand, needs nothing but `ssdiag`.
 
-### What a user can actually fetch (measured on 2026-11-03)
+### What a user can actually fetch (measured on 2026-11-04)
 
-Verified against `https://github.com/physicsdolphin/nv-uefi-unlocker` (branch `main`
-and its 26 releases). The pinned list is `SHA256SUMS.txt`, identical in release
-`v2.1.9` and in my working tree:
+> **This section was published on 2026-11-03 claiming that drive preparation was not
+> installable from GitHub. That claim was WRONG, and it is retracted here.** The
+> measurement that produced it asked for `make-usbroot.ps1` and
+> `assets-x86_64-windows.exe` as **top-level release asset URLs**
+> (`.../releases/download/<tag>/<name>`), which 404 -- and it never **opened the
+> `nv-uefi-unlocker-v2.1.9.zip` asset**, which is where those files are published. It
+> also said "26 releases"; the API reports 29. Below is the same question asked with
+> the zip opened, plus a fresh-clone simulation. If you are keeping an archive of the
+> old text, treat it as invalid.
 
-| File `drive.py` verifies | Publicly available? | Evidence |
+Verified against `https://github.com/physicsdolphin/nv-uefi-unlocker` (29 releases;
+release `v2.1.9`). The pinned list is `SHA256SUMS.txt`, identical in that release and
+in my working tree. **Every file `drive.py` verifies is published in the release `v2.1.9`
+zip, under its pinned hash:**
+
+| File `drive.py` verifies | Publicly available? | Measured 2026-11-04 |
 |---|---|---|
-| `ssdiag-x86_64-windows.exe` | **yes** -- release `v2.1.9` asset `ssdiag-x86_64-windows-0.6.4.exe` | SHA-256 `16727d20...` = pinned `16727d20...` |
-| `BOOTX64.EFI` | **yes** -- release `v2.1.9` asset | SHA-256 `fc1f70ac...` = pinned |
-| `make-usbroot.ps1` | **no** -- pinned hash matches no public artifact | pinned `e5c5bcfc...`; branch `main` ships `26bf2275...`; release `v0.2.0` asset `74ee4ec6...`; `v0.1.4` asset `d44e8390...` |
-| `assets-x86_64-windows.exe` | **no** -- same situation | pinned `40822cbc...`; `v0.2.0` asset `609280` bytes, `v0.1.4` `602112` bytes, neither matches |
-| `release/inputs/` (341 MB) | **no** -- 404 in the git tree *and* in every release asset | -- |
+| `BOOTX64.EFI` | **yes** -- standalone asset *and* inside the zip | `fc1f70ac...` = pinned |
+| `ssdiag-x86_64-windows.exe` | **yes** -- asset `ssdiag-x86_64-windows-0.6.4.exe` *and* inside the zip | `16727d20...` = pinned |
+| `make-usbroot.ps1` | **yes** -- inside `nv-uefi-unlocker-v2.1.9.zip` | `e5c5bcfc...` = pinned |
+| `assets-x86_64-windows.exe` | **yes** -- inside the same zip | `40822cbc...` = pinned |
+| `SHA256SUMS.txt` | **yes** -- standalone asset | the release publishes its own list, 9 entries, same hashes |
+| `release/inputs/` | **not published, and not required to be** | 0 entries in the git tree, 0 in every release asset. The maker does not need them pre-supplied: it fetches them (see below) |
+
+The zip's 9 entries, measured: `BOOTX64.EFI`, `LICENSE`, `README.md`,
+`make-usbroot.ps1`, `make-usbroot.sh`, `enable-turing-unlock.ps1`,
+`assets-x86_64-windows.exe`, `assets-x86_64-linux`, `ssdiag-x86_64-windows.exe`.
+
+`inputs/` is **not** a set of NVIDIA blobs to hunt for: on my tree it is exactly two
+Arch-package files, `NVIDIA-kernel-module-source-610.43.03.tar.xz` (25 559 KiB) and
+`nvidia-utils-610.43.03-1-x86_64_v3.pkg.tar.zst` (307 412 KiB) = **325 MiB**. The
+maker extracts everything it needs from them (`fwimage_*` are 84 MB each, extracted at
+build time), and `make-usbroot.ps1` says on its line 2 that NVIDIA firmware blobs are
+not distributed with the project: it **downloads** `gsp_rm_boot_dbg.bin` from
+hardcoded public URLs (lines 161-164), and line 287 accepts a file already sitting in
+the work dir **if its hash matches the pinned one**, printing how to drop it in for an
+offline build.
+
+**Fresh-clone simulation, measured 2026-11-04** (the only inputs being GitHub):
+an empty `nv-unlock/` tree filled *solely* by extracting that zip, `release/inputs/`
+present and **empty**, no NVIDIA packages downloaded. Result:
+
+```
+$ python drive.py --check        -> upstream tools: SHA-256 verified   (rc = 0)
+$ python drive.py -Family ga102 --build
+     scrubber_ad10x.bin: 8264 bytes, SHA-256 verified
+     derived gsp_boot_ga102.bin: 24576 bytes, SHA-256 verified
+     fwimage_ad10x.bin: 84226048 bytes (same image)
+     wrote ...\v67-ga102-four-plm.bin (64000 bytes, SHA-256 verified)
+     DONE (ga102).
+```
+
+So drive preparation **is** installable from GitHub, and the integrity gate passes on
+a tree built from published artifacts. The remaining step for a user is fetching the
+NVIDIA source/utils packages the maker needs to extract from -- which the maker
+itself handles, hash-checked.
 
 **Reading the state is installable from GitHub alone:**
 
@@ -252,15 +298,34 @@ simplest form is to put `ssdiag-x86_64-windows.exe` in the tray folder itself --
 (That asset's SHA-256 is the pinned one, so the probe runs exactly the tool this
 project pins. `ssdiag` installs its driver per probe: EventID 7045, elevation.)
 
-**Preparing the drive is NOT installable from GitHub today.** `drive.py` refuses to
-run an unverified maker -- it will not execute a `make-usbroot.ps1` whose SHA-256 is
-not the pinned one, and that refusal is the point of the check. So drive preparation
-is available only to whoever already holds the upstream tree with the pinned hashes
-(the author's tree), not to someone cloning public artifacts. This is an upstream
-packaging gap, not a design choice of this repo: the pinned hashes for the maker and
-the assets exe are published in `SHA256SUMS.txt`, but the files carrying them are not
-published anywhere. If you hit this, say so upstream (release `v2.1.9` ships
-`SHA256SUMS.txt` listing hashes for files that release does not ship).
+**Preparing the drive IS installable from GitHub** (see the simulation above). What
+`drive.py` refuses is not *installing* -- it refuses to **execute** a
+`make-usbroot.ps1` whose SHA-256 is not the pinned one, and that refusal is the point
+of the check: it protects you from a maker tampered with after publication. Fetch the
+release zip, extract it into `../nv-unlock/release/`, and the check passes.
+
+```powershell
+cd nvunlock-tray                 # RUN FROM INSIDE THE CLONED REPO: the ..\ paths below are
+                                 # relative to it, and they create the sibling nv-unlock folder
+New-Item -ItemType Directory -Force -Path ..\nv-unlock\release\inputs | Out-Null
+Invoke-WebRequest -Uri 'https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.9/nv-uefi-unlocker-v2.1.9.zip' -OutFile $env:TEMP\nvu.zip
+Invoke-WebRequest -Uri 'https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.9/SHA256SUMS.txt' -OutFile ..\nv-unlock\SHA256SUMS.txt
+Expand-Archive $env:TEMP\nvu.zip -DestinationPath ..\nv-unlock\release -Force
+python drive.py --check          # -> upstream tools: SHA-256 verified
+```
+
+Measured 2026-11-04 on a **public clone** of this repo (17 files, and no sibling
+`nv-unlock/`), running exactly these lines: the sibling tree appears with
+`make-usbroot.ps1`, `assets-x86_64-windows.exe`, `BOOTX64.EFI`,
+`ssdiag-x86_64-windows.exe` and `SHA256SUMS.txt`, and `drive.py --check` answers
+`upstream tools: SHA-256 verified` (rc 0). The zip also drops `LICENSE`, `README.md`,
+`make-usbroot.sh`, `assets-x86_64-linux`, `enable-turing-unlock.ps1` beside the tools:
+harmless, `drive.py` verifies only the names listed in `SHA256SUMS.txt`.
+
+The `inputs/` folder must **exist** (`-Work` is passed to the maker); it may start
+empty, the maker fills and hash-checks what it downloads. If your PC is behind a
+corporate proxy, the maker's download step is what fails -- run it by hand and read
+its message, it names the file and the URLs it tried.
 
 ## The icon menu
 
@@ -376,10 +441,13 @@ where the same launch without handles dies.
 - **NVML** is broken on the development machine (the drive's driver replaces
   `nvml.dll`), so the "clean" path through `pynvml` is not usable there. The project
   reads the GPU **through the upstream tool**, not by guessing.
-- **Drive preparation needs upstream files that are not published** (measured 2026-11-03,
-  see *What a user can actually fetch*): the pinned SHA-256 of `make-usbroot.ps1` and
-  `assets-x86_64-windows.exe` matches no public artifact, and `release/inputs/` is 404
-  everywhere. The icon, the state reading and `state.py` work without them.
+- **Drive preparation needs the upstream release zip** (measured 2026-11-04, see
+  *What a user can actually fetch*): all four verified files are published inside
+  `nv-uefi-unlocker-v2.1.9.zip`, under their pinned hashes, and a tree built from that
+  zip alone passes `drive.py --check` and builds a family. The `inputs/` NVIDIA source
+  and utils packages (325 MiB on my tree) are not published and are not needed
+  pre-supplied: the maker downloads them, hash-checked. The icon, the state reading and
+  `state.py` work without any of it.
 - Files **ignored by the repo**: `state.json`, `drive.json` (retained drive choice),
   `tray-run.log`, `config.json` (private paths), the `_16.png`/`_32.png` variants
   (regenerated at first launch), and `ssdiag*.exe` -- the probe binary is **not**
@@ -403,6 +471,15 @@ where the same launch without handles dies.
 | `requirements.txt` | `pystray`, `pillow` |
 
 ## Version
+
+**v2.2.1** -- retraction, measured the same day: the 2026-11-03 claim "drive
+preparation is not installable from GitHub" was **wrong**. The four files `drive.py`
+verifies are published inside `nv-uefi-unlocker-v2.1.9.zip` at their pinned SHA-256
+(`make-usbroot.ps1` = `e5c5bcfc…`, `assets-x86_64-windows.exe` = `40822cbc…`), and a
+tree built from that zip alone, with `release/inputs/` left **empty**, passes
+`drive.py --check` (`upstream tools: SHA-256 verified`) **and** builds ga102 to
+`DONE`. The earlier measurement never opened the zip asset: it probed top-level asset
+URLs, which 404. See *What a user can actually fetch*.
 
 **v2.2** -- measured end to end on a real machine (2026-11-04): `install.cmd`
 double-clicked -> icon in the tray (measured: a `SystemTrayIcon` window registered,
