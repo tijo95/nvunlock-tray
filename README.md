@@ -1,10 +1,10 @@
-## 🎬 Démonstration vidéo
+## 🎬 Video Demonstration
 
-Découvrez **NVUnlock-Tray : Gérez et surveillez le LOCK / UNLOCK de votre GPU NVIDIA !**
+Discover **NVUnlock-Tray: Manage and Monitor NVIDIA GPU LOCK / UNLOCK Status!**
 
-[![NVUnlock-Tray - Démonstration vidéo](https://img.youtube.com/vi/AxXFfhbg3d0/hqdefault.jpg)](https://www.youtube.com/watch?v=AxXFfhbg3d0)
+[![NVUnlock-Tray - Video Demonstration](https://img.youtube.com/vi/AxXFfhbg3d0/hqdefault.jpg)](https://www.youtube.com/watch?v=AxXFfhbg3d0)
 
-▶️ **[Regarder la vidéo sur YouTube](https://www.youtube.com/watch?v=AxXFfhbg3d0)**
+▶️ **[Watch the video on YouTube](https://www.youtube.com/watch?v=AxXFfhbg3d0)**
 
 # nvunlock-tray
 
